@@ -12,7 +12,7 @@ export default function App() {
   if (!permission) {
     return (
       <View style={styles.container}>
-        <Text style={styles.message}>Loading camera…</Text>
+        <Text style={styles.message}>Loading camera….</Text>
         <StatusBar style="light" />
       </View>
     );
