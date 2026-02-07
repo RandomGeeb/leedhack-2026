@@ -11,11 +11,11 @@
   },
   "dependencies": {
     "expo": "~54.0.33",
-    "expo-camera": "^17.0.10",
-    "expo-presage-emotion": "file:./modules/expo-presage-emotion",
+    "expo-file-system": "^19.0.21",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-native": "0.81.5",
+    "react-native-vision-camera": "^4.7.3"
   },
   "private": true,
   "devDependencies": {

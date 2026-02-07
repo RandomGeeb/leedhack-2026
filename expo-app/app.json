@@ -36,9 +36,9 @@
     },
     "plugins": [
       [
-        "expo-camera",
+        "react-native-vision-camera",
         {
-          "cameraPermission": "Allow this app to access your camera to take photos."
+          "cameraPermissionText": "Allow this app to access your camera to take photos."
         }
       ]
     ]

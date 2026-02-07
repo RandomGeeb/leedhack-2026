@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,51 +6,60 @@ import {
   TouchableOpacity,
   Image,
   Alert,
-  TextInput,
-  ScrollView,
   Platform,
+  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import {
-  PresageEmotionView,
-  inferEmotionFromVitals,
-} from 'expo-presage-emotion';
+  Camera,
+  useCameraDevice,
+  useCameraPermission,
+} from 'react-native-vision-camera';
+import * as FileSystem from 'expo-file-system';
 
-const TAB_CAMERA = 'camera';
-const TAB_EMOTION = 'emotion';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Flow: 'back' → 'front' → 'preview'
+const STEP_BACK = 'back';
+const STEP_FRONT = 'front';
+const STEP_PREVIEW = 'preview';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(TAB_CAMERA);
-  const [facing, setFacing] = useState('back');
-  const [lastPhoto, setLastPhoto] = useState(null);
-  const [permission, requestPermission] = useCameraPermissions();
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const backDevice = useCameraDevice('back');
+  const frontDevice = useCameraDevice('front');
   const cameraRef = useRef(null);
 
-  // Presage emotion state
-  const [presageApiKey, setPresageApiKey] = useState('');
-  const [vitals, setVitals] = useState(null);
-  const [emotion, setEmotion] = useState(null);
+  const [step, setStep] = useState(STEP_BACK);
+  const [backPhotoPath, setBackPhotoPath] = useState(null);
+  const [frontPhotoPath, setFrontPhotoPath] = useState(null);
+  const [backBase64, setBackBase64] = useState(null);
+  const [frontBase64, setFrontBase64] = useState(null);
+  const [sending, setSending] = useState(false);
+  const pendingFront = useRef(false);
 
-  function handleVitals(event) {
-    const v = event.nativeEvent;
-    setVitals(v);
-    setEmotion(inferEmotionFromVitals(v));
-  }
+  // Auto-snap selfie once the front camera initialises
+  const onInitialized = useCallback(async () => {
+    if (!pendingFront.current || !cameraRef.current) return;
+    pendingFront.current = false;
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+      const photo = await cameraRef.current.takePhoto();
+      setFrontPhotoPath(photo.path);
+      setStep(STEP_PREVIEW);
+    } catch {
+      // If auto-snap fails, let user retry
+      setStep(STEP_BACK);
+      setBackPhotoPath(null);
+    }
+  }, []);
 
-  if (!permission && activeTab === TAB_CAMERA) {
+  // Permission screen
+  if (!hasPermission) {
     return (
       <View style={styles.container}>
-        <Text style={styles.message}>Loading camera…</Text>
-        <StatusBar style="light" />
-      </View>
-    );
-  }
-
-  if (!permission?.granted && activeTab === TAB_CAMERA) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.message}>We need camera access to take photos.</Text>
+        <Text style={styles.message}>We need camera access to continue.</Text>
         <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
           <Text style={styles.permissionButtonText}>Grant permission</Text>
         </TouchableOpacity>
@@ -59,97 +68,187 @@ export default function App() {
     );
   }
 
+  const device = step === STEP_FRONT ? frontDevice : backDevice;
+
+  if (!device) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.message}>No camera device found.</Text>
+        <StatusBar style="light" />
+      </View>
+    );
+  }
+
+  async function readAsBase64(path) {
+    try {
+      const uri = path.startsWith('file://') ? path : `file://${path}`;
+      return await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } catch {
+      // Fallback: try reading via fetch + blob
+      const resp = await fetch(path.startsWith('file://') ? path : `file://${path}`);
+      const blob = await resp.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result;
+          // strip "data:...;base64," prefix
+          resolve(result.split(',')[1] || result);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+  }
+
+  async function handleCapture() {
+    try {
+      if (!cameraRef.current) return;
+      const photo = await cameraRef.current.takePhoto();
+      const photoPath = photo.path;
+
+      if (step === STEP_BACK) {
+        setBackPhotoPath(photoPath);
+        // Switch to front camera — onInitialized will auto-snap
+        pendingFront.current = true;
+        setStep(STEP_FRONT);
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message ?? 'Could not take photo');
+    }
+  }
+
+  function handleRetake() {
+    setBackPhotoPath(null);
+    setFrontPhotoPath(null);
+    setBackBase64(null);
+    setFrontBase64(null);
+    setStep(STEP_BACK);
+  }
+
+  async function handleSend() {
+    if (!backPhotoPath || !frontPhotoPath) return;
+    setSending(true);
+    try {
+      // Convert to base64 at send time
+      const [back64, front64] = await Promise.all([
+        readAsBase64(backPhotoPath),
+        readAsBase64(frontPhotoPath),
+      ]);
+
+      setBackBase64(back64);
+      setFrontBase64(front64);
+
+      const payload = {
+        backImage: back64,
+        frontImage: front64,
+        timestamp: new Date().toISOString(),
+      };
+
+      // TODO: Replace with your actual backend URL
+      // await fetch('https://your-backend.com/api/upload', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify(payload),
+      // });
+
+      console.log(
+        'Payload ready — backImage length:',
+        payload.backImage.length,
+        'frontImage length:',
+        payload.frontImage.length,
+      );
+      Alert.alert('Ready!', 'Both images encoded as base64 and ready to send.');
+    } catch (e) {
+      Alert.alert('Send failed', e?.message ?? 'Unknown error');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // ──── Preview screen ────
+  if (step === STEP_PREVIEW && backPhotoPath && frontPhotoPath) {
+    return (
+      <View style={styles.container}>
+        <StatusBar style="light" />
+
+        {/* Back photo full screen */}
+        <Image source={{ uri: `file://${backPhotoPath}` }} style={styles.previewMain} />
+
+        {/* Front photo PIP */}
+        <View style={styles.previewPip}>
+          <Image source={{ uri: `file://${frontPhotoPath}` }} style={styles.previewPipImage} />
+        </View>
+
+        {/* Bottom actions */}
+        <View style={styles.previewBottomBar}>
+          <TouchableOpacity style={styles.retakeButton} onPress={handleRetake}>
+            <Text style={styles.retakeButtonText}>Retake</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.sendButton, sending && styles.sendButtonDisabled]}
+            onPress={handleSend}
+            disabled={sending}
+          >
+            {sending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.sendButtonText}>Send</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ──── Camera screen (back or front) ────
   return (
     <View style={styles.container}>
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === TAB_CAMERA && styles.tabActive]}
-          onPress={() => setActiveTab(TAB_CAMERA)}
-        >
-          <Text style={styles.tabText}>Camera</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === TAB_EMOTION && styles.tabActive]}
-          onPress={() => setActiveTab(TAB_EMOTION)}
-        >
-          <Text style={styles.tabText}>Emotion</Text>
-        </TouchableOpacity>
-      </View>
+      <StatusBar style="light" />
 
-      {activeTab === TAB_CAMERA && (
+      {step === STEP_FRONT && backPhotoPath ? (
         <>
-          <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
-          <View style={styles.controls}>
-            <TouchableOpacity
-              style={styles.flipButton}
-              onPress={() => setFacing((c) => (c === 'back' ? 'front' : 'back'))}
-            >
-              <Text style={styles.flipButtonText}>Flip camera</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.captureButton}
-              onPress={async () => {
-                if (!cameraRef.current) return;
-                try {
-                  const photo = await cameraRef.current.takePicture();
-                  setLastPhoto(photo);
-                } catch (e) {
-                  Alert.alert('Error', e?.message ?? 'Could not take photo');
-                }
-              }}
-            />
+          {/* Show frozen back photo while selfie is being captured */}
+          <Image source={{ uri: `file://${backPhotoPath}` }} style={styles.camera} />
+          <View style={styles.capturingOverlay}>
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={styles.capturingText}>Loading...</Text>
           </View>
-          {lastPhoto && (
-            <View style={styles.previewContainer}>
-              <Image source={{ uri: lastPhoto.uri }} style={styles.previewImage} />
-              <Text style={styles.previewLabel}>Last photo</Text>
-            </View>
-          )}
+          {/* Hidden camera for auto-snap */}
+          <Camera
+            ref={cameraRef}
+            style={styles.hiddenCamera}
+            device={device}
+            isActive={true}
+            photo={true}
+            onInitialized={onInitialized}
+          />
+        </>
+      ) : (
+        <>
+          {/* Step indicator */}
+          <View style={styles.stepIndicator}>
+            <Text style={styles.stepText}>Take a photo</Text>
+          </View>
+
+          <Camera
+            ref={cameraRef}
+            style={styles.camera}
+            device={device}
+            isActive={step === STEP_BACK}
+            photo={true}
+          />
+
+          {/* Shutter */}
+          <View style={styles.bottomBar}>
+            <TouchableOpacity style={styles.captureButton} onPress={handleCapture}>
+              <View style={styles.captureInner} />
+            </TouchableOpacity>
+          </View>
         </>
       )}
-
-      {activeTab === TAB_EMOTION && (
-        <ScrollView style={styles.emotionScreen} contentContainerStyle={styles.emotionContent}>
-          <Text style={styles.emotionTitle}>Presage emotion recognition</Text>
-          <Text style={styles.emotionHint}>
-            Uses Presage SmartSpectra vitals (pulse, breathing) to infer stress / calm / neutral.
-            Get an API key at physiology.presagetech.com. Android development build required.
-          </Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Presage API key"
-            placeholderTextColor="#888"
-            value={presageApiKey}
-            onChangeText={setPresageApiKey}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <View style={styles.presageViewContainer}>
-            <PresageEmotionView
-              apiKey={presageApiKey}
-              onVitals={handleVitals}
-              style={styles.presageView}
-            />
-          </View>
-          {(vitals || emotion) && (
-            <View style={styles.vitalsCard}>
-              {vitals && (
-                <Text style={styles.vitalsText}>
-                  Pulse: {vitals.pulseRate?.toFixed(1) ?? '—'} bpm · Breathing:{' '}
-                  {vitals.breathingRate?.toFixed(1) ?? '—'} /min
-                </Text>
-              )}
-              {emotion && (
-                <Text style={[styles.emotionLabel, styles[`emotion_${emotion}`]]}>
-                  {emotion}
-                </Text>
-              )}
-            </View>
-          )}
-        </ScrollView>
-      )}
-
-      <StatusBar style="light" />
     </View>
   );
 }
@@ -159,151 +258,173 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  tabBar: {
-    flexDirection: 'row',
-    paddingTop: Platform.OS === 'ios' ? 52 : 24,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    backgroundColor: '#111',
-    gap: 8,
-  },
-  tab: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-  },
-  tabActive: {
-    backgroundColor: '#0a84ff',
-  },
-  tabText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   message: {
+    flex: 1,
     color: '#fff',
     textAlign: 'center',
+    textAlignVertical: 'center',
     paddingHorizontal: 24,
     fontSize: 16,
+    marginTop: '50%',
   },
   permissionButton: {
-    marginTop: 16,
     alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: '#0a84ff',
-    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    marginBottom: '50%',
   },
   permissionButtonText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+
+  // ── Camera screen ──
+  stepIndicator: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 36,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    alignItems: 'center',
+  },
+  stepText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   camera: {
     flex: 1,
     width: '100%',
+    borderRadius: 20,
+    overflow: 'hidden',
   },
-  controls: {
+  hiddenCamera: {
     position: 'absolute',
-    bottom: 48,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
+  miniPip: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 110 : 86,
+    right: 16,
+    width: SCREEN_WIDTH * 0.25,
+    height: SCREEN_WIDTH * 0.25 * 1.33,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  miniPipImage: {
+    flex: 1,
+    width: '100%',
+  },
+  capturingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
-    gap: 32,
+    justifyContent: 'center',
+    zIndex: 20,
   },
-  flipButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    borderRadius: 8,
-  },
-  flipButtonText: {
+  capturingText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+    marginTop: 12,
   },
-  captureButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#fff',
-    borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.5)',
-  },
-  previewContainer: {
+  bottomBar: {
     position: 'absolute',
-    top: 56,
-    right: 16,
+    bottom: Platform.OS === 'ios' ? 50 : 32,
+    left: 0,
+    right: 0,
     alignItems: 'center',
   },
-  previewImage: {
+  captureButton: {
     width: 80,
     height: 80,
-    borderRadius: 8,
-    backgroundColor: '#333',
+    borderRadius: 40,
+    borderWidth: 5,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  previewLabel: {
-    color: '#fff',
-    fontSize: 12,
-    marginTop: 4,
+  captureInner: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#fff',
   },
-  emotionScreen: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  emotionContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  emotionTitle: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  emotionHint: {
-    color: '#999',
-    fontSize: 13,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  input: {
-    backgroundColor: '#222',
-    color: '#fff',
-    padding: 14,
-    borderRadius: 8,
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  presageViewContainer: {
-    height: 320,
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 16,
-  },
-  presageView: {
+
+  // ── Preview screen ──
+  previewMain: {
     flex: 1,
     width: '100%',
-    height: '100%',
+    borderRadius: 20,
+    overflow: 'hidden',
   },
-  vitalsCard: {
-    backgroundColor: '#1a1a1a',
-    padding: 16,
-    borderRadius: 12,
+  previewPip: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 36,
+    right: 16,
+    width: SCREEN_WIDTH * 0.3,
+    height: SCREEN_WIDTH * 0.3 * 1.33,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 3,
+    borderColor: '#000',
+    backgroundColor: '#111',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 10,
   },
-  vitalsText: {
-    color: '#ccc',
-    fontSize: 15,
-    marginBottom: 8,
+  previewPipImage: {
+    flex: 1,
+    width: '100%',
   },
-  emotionLabel: {
-    fontSize: 18,
+  previewBottomBar: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 50 : 32,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  retakeButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+  },
+  retakeButtonText: {
+    color: '#000',
+    fontSize: 16,
     fontWeight: '700',
-    textTransform: 'capitalize',
   },
-  emotion_stressed: { color: '#ff6b6b' },
-  emotion_calm: { color: '#69db7c' },
-  emotion_neutral: { color: '#74c0fc' },
+  sendButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 36,
+    borderRadius: 24,
+    backgroundColor: '#5B21B6',
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    opacity: 0.6,
+  },
+  sendButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
 });
