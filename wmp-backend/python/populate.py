@@ -205,13 +205,15 @@ class FaceRegistrationCloud:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+    
     # ==========================================================================
-    # CONFIGURATION - Replace with your Weaviate Cloud credentials
+    # CONFIGURATION - Set WEAVIATE_CLUSTER_URL and WEAVIATE_API_KEY in .env
     # ==========================================================================
     
-    WEAVIATE_CLUSTER_URL = "dxki3elrrmeleb8xnujsjw.c0.europe-west3.gcp.weaviate.cloud"
-    
-    WEAVIATE_API_KEY = "V1I3T29EdkZyRE1GOUNsOV9ITnh5cWpybGFuRUsrZlBUR2NiZlpwMzZ6bGRVQXF5d3JlUi9oRjUwenhrPV92MjAw" # Replace this or use environment variable
+    WEAVIATE_CLUSTER_URL = os.environ["WEAVIATE_CLUSTER_URL"]
+    WEAVIATE_API_KEY = os.environ["WEAVIATE_API_KEY"]
     
     
     # ==========================================================================
@@ -253,7 +255,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
         print("\nPlease check:")
-        print("1. Your cluster URL is correct, it is: ", WEAVIATE_CLUSTER_URL)
-        print("2. Your API key is valid, it is: ", WEAVIATE_API_KEY)
+        print("1. Your WEAVIATE_CLUSTER_URL env var is correct")
+        print("2. Your WEAVIATE_API_KEY env var is valid")
         print("3. Your cluster is running")
         exit(1)
