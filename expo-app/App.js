@@ -221,11 +221,11 @@ function CameraScreen() {
           } catch (err) {
             console.warn('Emotion backend unavailable, using dummy data:', err.message);
             return [
-              { label: 'surprise', score: 0.9360453486442566 },
-              { label: 'fear', score: 0.023657215759158134 },
-              { label: 'happy', score: 0.018095578998327255 },
-              { label: 'angry', score: 0.009856591001152992 },
-              { label: 'neutral', score: 0.004771077074110508 },
+              { label: 'surprise', score: 0.0 },
+              { label: 'fear', score: 0.0 },
+              { label: 'happy', score: 0.0 },
+              { label: 'angry', score: 0.0 },
+              { label: 'neutral', score: 0.0 },
             ];
           }
         })(),
