@@ -30,6 +30,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const EMOTION_ML_URL = process.env.EXPO_PUBLIC_EMOTION_ML_URL ?? 'https://wheresmyprofessor-api.rcn.sh/analyse';
 const SAVE_URL = process.env.EXPO_PUBLIC_SAVE_URL ?? 'http://localhost:3000/api/save';
+const MONGO_API_URL = process.env.EXPO_PUBLIC_MONGO_API_URL ?? 'https://reserveless-nonlixiviated-jamarion.ngrok-free.dev';
 
 const EMOTION_EMOJIS = {
   happy: '😊',
@@ -626,29 +627,79 @@ function CameraScreen() {
 }
 
 
+const STUDENT_ID = 's1111111-1111-1111-1111-111111111111'; // TODO: replace with auth context
+const LECTURER_ID = '11111111-1111-1111-1111-111111111111';     // TODO: replace with auth context
+
 function StudentProfileScreen() {
-  const stats = {
-    attendance: 48, // Low attendance for demonstration
-    modules: 5,
-    rank: 'Top 10%',
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ attendance: 0, modules: 0 });
+  const [studentName, setStudentName] = useState('');
+  const [schedule, setSchedule] = useState([]);
+  const [selectedDay, setSelectedDay] = useState(0);
+
+  // Build current week starting Monday
+  const getWeekDays = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0=Sun
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((dayOfWeek + 6) % 7));
+    const days = [];
+    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      days.push({
+        day: names[i],
+        date: String(d.getDate()).padStart(2, '0'),
+        isoDate: d.toISOString().slice(0, 10),
+      });
+    }
+    return days;
   };
 
-  const [selectedDay, setSelectedDay] = useState(0);
-  const weekDays = [
-    { day: 'Mon', date: '07' },
-    { day: 'Tue', date: '08' },
-    { day: 'Wed', date: '09' },
-    { day: 'Thu', date: '10' },
-    { day: 'Fri', date: '11' },
-    { day: 'Sat', date: '12' },
-    { day: 'Sun', date: '13' },
-  ];
+  const weekDays = getWeekDays();
 
-  const upcomingLessons = [
-    { id: '1', title: 'Cybersecurity', time: '9:00 AM', room: 'Hall B', instructor: 'Dr. Smith' },
-    { id: '2', title: 'Mobile Dev', time: '10:30 AM', room: 'Room 305', instructor: 'Dr. Brown' },
-    { id: '3', title: 'Data Structures', time: '1:00 PM', room: 'Lab 2A', instructor: 'Prof. Miller' },
-  ];
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [profileRes, scheduleRes] = await Promise.all([
+          fetch(`${MONGO_API_URL}/student/${STUDENT_ID}/profile`),
+          fetch(`${MONGO_API_URL}/student/${STUDENT_ID}/schedule?date=${weekDays[selectedDay].isoDate}`),
+        ]);
+        if (profileRes.ok) {
+          const profile = await profileRes.json();
+          setStats(profile.stats);
+          setStudentName(profile.student.fullname);
+        }
+        if (scheduleRes.ok) {
+          const data = await scheduleRes.json();
+          setSchedule(data.schedule ?? []);
+        }
+      } catch (err) {
+        console.warn('Student API fetch failed, using fallback:', err.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Re-fetch schedule when selected day changes
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(
+          `${MONGO_API_URL}/student/${STUDENT_ID}/schedule?date=${weekDays[selectedDay].isoDate}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setSchedule(data.schedule ?? []);
+        }
+      } catch (err) {
+        console.warn('Schedule fetch failed:', err.message);
+      }
+    })();
+  }, [selectedDay]);
 
   function getAttendanceBadge(attendance) {
     if (attendance < 50) {
@@ -670,12 +721,28 @@ function StudentProfileScreen() {
     return {
       bg: 'rgba(52, 211, 153, 0.15)',
       color: '#34D399',
-      text: '+2%',
+      text: 'Good',
       icon: 'trending-up'
     };
   }
 
   const badge = getAttendanceBadge(stats.attendance);
+
+  function formatTime(datetime) {
+    if (!datetime) return '';
+    const d = new Date(datetime);
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  if (loading) {
+    return (
+      <LinearGradient colors={['#2E1065', '#000000']} style={styles.profileContainer}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#A78BFA" />
+        </View>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient colors={['#2E1065', '#000000']} style={styles.profileContainer}>
@@ -684,8 +751,8 @@ function StudentProfileScreen() {
           <View style={styles.avatarPlaceholder}>
             <Ionicons name="person" size={40} color="#DDD6FE" />
           </View>
-          <Text style={styles.profileName}>Marcus Young</Text>
-          <Text style={styles.profileHandle}>Student ID: 2024-STU-01</Text>
+          <Text style={styles.profileName}>{studentName || 'Student'}</Text>
+          <Text style={styles.profileHandle}>Student ID: {STUDENT_ID}</Text>
         </View>
 
         <View style={styles.analyticsTitleRow}>
@@ -727,20 +794,26 @@ function StudentProfileScreen() {
             ))}
           </ScrollView>
 
-          <Text style={styles.upcomingHeader}>Classes for Feb {weekDays[selectedDay].date}</Text>
+          <Text style={styles.upcomingHeader}>Classes for {weekDays[selectedDay].day} {weekDays[selectedDay].date}</Text>
 
-          {upcomingLessons.map(lesson => (
-            <TouchableOpacity key={lesson.id} style={styles.timetableCard}>
-              <View style={styles.lessonTimeBox}>
-                <Text style={styles.lessonTimeText}>{lesson.time}</Text>
-              </View>
-              <View style={styles.lessonInfo}>
-                <Text style={styles.lessonTitle}>{lesson.title}</Text>
-                <Text style={styles.lessonMetaText}>{lesson.room} • {lesson.instructor}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#A78BFA" />
-            </TouchableOpacity>
-          ))}
+          {schedule.length === 0 ? (
+            <Text style={{ color: '#888', textAlign: 'center', marginTop: 16, fontSize: 14 }}>
+              No classes scheduled
+            </Text>
+          ) : (
+            schedule.map((lesson, idx) => (
+              <TouchableOpacity key={lesson.lecture_id ?? idx} style={styles.timetableCard}>
+                <View style={styles.lessonTimeBox}>
+                  <Text style={styles.lessonTimeText}>{formatTime(lesson.datetime)}</Text>
+                </View>
+                <View style={styles.lessonInfo}>
+                  <Text style={styles.lessonTitle}>{lesson.lecture_id}</Text>
+                  <Text style={styles.lessonMetaText}>{lesson.location} • {lesson.lecturer}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color="#A78BFA" />
+              </TouchableOpacity>
+            ))
+          )}
         </View>
       </ScrollView>
     </LinearGradient>
@@ -749,25 +822,98 @@ function StudentProfileScreen() {
 
 
 function LecturerProfileScreen() {
-  // Mock Data based on Lecture / Attendance Schema
-  const stats = {
-    avgEngagement: 82,
-    attendanceRate: 94,
-    totalLectures: 24,
-    activeStudents: 156,
-  };
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    avgEngagement: 0,
+    attendanceRate: 0,
+    totalLectures: 0,
+    activeStudents: 0,
+  });
+  const [lecturerName, setLecturerName] = useState('');
+  const [heatmapRaw, setHeatmapRaw] = useState([]);
+  const [nextSession, setNextSession] = useState(null);
 
-  // Engagement Heatmap Data (10 weeks * 7 days = 70 squares)
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [profileRes, heatmapRes, sessionRes] = await Promise.all([
+          fetch(`${MONGO_API_URL}/lecturer/${LECTURER_ID}/profile`),
+          fetch(`${MONGO_API_URL}/lecturer/${LECTURER_ID}/heatmap`),
+          fetch(`${MONGO_API_URL}/lecturer/${LECTURER_ID}/next-session`),
+        ]);
+        if (profileRes.ok) {
+          const data = await profileRes.json();
+          setStats(data.stats);
+          setLecturerName(data.lecturer.fullname);
+        }
+        if (heatmapRes.ok) {
+          const data = await heatmapRes.json();
+          setHeatmapRaw(data.heatmap ?? []);
+        }
+        if (sessionRes.ok) {
+          const data = await sessionRes.json();
+          setNextSession(data.session);
+        }
+      } catch (err) {
+        console.warn('Lecturer API fetch failed:', err.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Build heatmap grid from raw data (pad to 20 weeks * 7 days)
   const weeks = 20;
   const days = 7;
-  const heatmapData = Array.from({ length: weeks * days }, () => Math.floor(Math.random() * 100));
+  const heatmapScoreMap = {};
+  heatmapRaw.forEach((entry) => { heatmapScoreMap[entry.date] = entry.score; });
+
+  // Build 20-week calendar grid ending this week
+  const buildHeatmapGrid = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - ((dayOfWeek + 6) % 7));
+    const startMonday = new Date(monday);
+    startMonday.setDate(monday.getDate() - (weeks - 1) * 7);
+
+    const grid = [];
+    for (let w = 0; w < weeks; w++) {
+      for (let d = 0; d < days; d++) {
+        const date = new Date(startMonday);
+        date.setDate(startMonday.getDate() + w * 7 + d);
+        const key = date.toISOString().slice(0, 10);
+        grid.push(heatmapScoreMap[key] ?? 0);
+      }
+    }
+    return grid;
+  };
+
+  const heatmapData = buildHeatmapGrid();
 
   function getHeatmapColor(score) {
-    if (score > 80) return '#A78BFA'; // Light Purple
-    if (score > 60) return '#8B5CF6'; // Medium Purple
-    if (score > 40) return '#7C3AED'; // Deep Purple
-    if (score > 20) return '#6D28D9'; // Darker Purple
-    return 'rgba(255,255,255,0.05)'; // Empty slot
+    if (score > 80) return '#A78BFA';
+    if (score > 60) return '#8B5CF6';
+    if (score > 40) return '#7C3AED';
+    if (score > 20) return '#6D28D9';
+    return 'rgba(255,255,255,0.05)';
+  }
+
+  function formatSessionTime(datetime) {
+    if (!datetime) return '';
+    const d = new Date(datetime);
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  if (loading) {
+    return (
+      <LinearGradient colors={['#2E1065', '#000000']} style={styles.profileContainer}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#A78BFA" />
+        </View>
+      </LinearGradient>
+    );
   }
 
   return (
@@ -777,8 +923,8 @@ function LecturerProfileScreen() {
           <View style={styles.avatarPlaceholder}>
             <Ionicons name="school" size={40} color="#DDD6FE" />
           </View>
-          <Text style={styles.profileName}>Dr. Eleanor Vance</Text>
-          <Text style={styles.profileHandle}>Lecturer ID: 8821-V</Text>
+          <Text style={styles.profileName}>{lecturerName || 'Lecturer'}</Text>
+          <Text style={styles.profileHandle}>Lecturer ID: {LECTURER_ID}</Text>
         </View>
 
         <View style={styles.analyticsTitleRow}>
@@ -791,7 +937,7 @@ function LecturerProfileScreen() {
             <Text style={styles.statLabel}>Engagement</Text>
             <View style={[styles.miniTrend, { backgroundColor: 'rgba(167, 139, 250, 0.2)' }]}>
               <Ionicons name="trending-up" size={12} color="#A78BFA" />
-              <Text style={[styles.trendText, { color: '#A78BFA' }]}>+4%</Text>
+              <Text style={[styles.trendText, { color: '#A78BFA' }]}>Live</Text>
             </View>
           </View>
           <View style={styles.statCard}>
@@ -799,7 +945,7 @@ function LecturerProfileScreen() {
             <Text style={styles.statLabel}>Attendance</Text>
             <View style={[styles.miniTrend, { backgroundColor: 'rgba(250, 204, 21, 0.1)' }]}>
               <Ionicons name="remove" size={12} color="#FACC15" />
-              <Text style={[styles.trendText, { color: '#FACC15' }]}>Stable</Text>
+              <Text style={[styles.trendText, { color: '#FACC15' }]}>Live</Text>
             </View>
           </View>
         </View>
@@ -859,19 +1005,24 @@ function LecturerProfileScreen() {
           </View>
         </View>
 
-
         <View style={styles.sessionCard}>
           <Text style={styles.graphLabel}>Next Session</Text>
-          <View style={styles.sessionRow}>
-            <View style={styles.sessionInfo}>
-              <Text style={styles.sessionName}>Advanced Quantum Theory</Text>
-              <Text style={styles.sessionMeta}>Room 402 • 10:30 AM</Text>
+          {nextSession ? (
+            <View style={styles.sessionRow}>
+              <View style={styles.sessionInfo}>
+                <Text style={styles.sessionName}>{nextSession.lecture_id}</Text>
+                <Text style={styles.sessionMeta}>{nextSession.location} • {formatSessionTime(nextSession.datetime)}</Text>
+              </View>
+              <View style={styles.sessionScore}>
+                <Text style={styles.scoreValue}>{nextSession.targetScore ?? '—'}</Text>
+                <Text style={styles.scoreLabel}>Target</Text>
+              </View>
             </View>
-            <View style={styles.sessionScore}>
-              <Text style={styles.scoreValue}>88</Text>
-              <Text style={styles.scoreLabel}>Target</Text>
-            </View>
-          </View>
+          ) : (
+            <Text style={{ color: '#888', textAlign: 'center', marginTop: 12, fontSize: 14 }}>
+              No upcoming sessions
+            </Text>
+          )}
         </View>
       </ScrollView>
     </LinearGradient>
