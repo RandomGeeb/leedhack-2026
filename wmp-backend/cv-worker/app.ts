@@ -6,17 +6,30 @@ const app = new Hono().basePath("/api");
 
 app.use("*", cors());
 
-// Lazy singleton — initialised once, reused across warm invocations
+// Lazy singleton — initialised once, reused across warm invocations.
+// Resets on failure so the next request retries.
 let clientPromise: Promise<FaceRecognitionClient> | null = null;
 function getClient() {
   if (!clientPromise) {
-    clientPromise = FaceRecognitionClient.create();
+    clientPromise = FaceRecognitionClient.create().catch((err) => {
+      clientPromise = null; // allow retry on next request
+      throw err;
+    });
   }
   return clientPromise;
 }
 
-// Health check
-app.get("/", (c) => c.json({ status: "ok" }));
+// Health check — no DB call, confirms routing works
+app.get("/", (c) =>
+  c.json({
+    status: "ok",
+    env: {
+      hasClusterUrl: !!process.env.WEAVIATE_CLUSTER_URL,
+      hasApiKey: !!process.env.WEAVIATE_API_KEY,
+      hasEmbeddingUrl: !!process.env.PYTHON_EMBEDDING_URL,
+    },
+  })
+);
 
 // Search by base64 image
 app.post("/search", async (c) => {
@@ -50,16 +63,26 @@ app.post("/search", async (c) => {
 
 // List registered people
 app.get("/people", async (c) => {
-  const client = await getClient();
-  const people = await client.listPeople();
-  return c.json(people);
+  try {
+    const client = await getClient();
+    const people = await client.listPeople();
+    return c.json(people);
+  } catch (err: any) {
+    console.error("People error:", err);
+    return c.json({ error: err.message ?? "Internal server error" }, 500);
+  }
 });
 
 // Database stats
 app.get("/stats", async (c) => {
-  const client = await getClient();
-  const stats = await client.getStats();
-  return c.json(stats);
+  try {
+    const client = await getClient();
+    const stats = await client.getStats();
+    return c.json(stats);
+  } catch (err: any) {
+    console.error("Stats error:", err);
+    return c.json({ error: err.message ?? "Internal server error" }, 500);
+  }
 });
 
 export default app;
