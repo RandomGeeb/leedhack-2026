@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -85,6 +85,19 @@ function CameraScreen() {
   const failureScale = useRef(new Animated.Value(0)).current;
   const failureOpacity = useRef(new Animated.Value(0)).current;
   const pendingFront = useRef(false);
+
+  // Request location permission early so it's ready when the user saves
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Location Required',
+          'Location access is needed to verify you are at the lecture. Please enable it in your device settings.',
+        );
+      }
+    })();
+  }, []);
 
   // Auto-snap selfie once the front camera initialises
   const onInitialized = useCallback(async () => {
