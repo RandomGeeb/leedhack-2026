@@ -26,7 +26,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? 'http://localhost:3000/api/analyse';
+const EMOTION_ML_URL = process.env.EXPO_PUBLIC_EMOTION_ML_URL ?? 'https://wheresmyprofessor-api.rcn.sh/analyse';
 const VISION_BACKEND_URL = process.env.EXPO_PUBLIC_VISION_BACKEND_URL ?? 'http://localhost:3000/api/identify';
 const SAVE_URL = process.env.EXPO_PUBLIC_SAVE_URL ?? 'http://localhost:3000/api/save';
 
@@ -187,7 +187,7 @@ function CameraScreen() {
         // Front (selfie) → emotion analysis
         (async () => {
           try {
-            const response = await fetch(BACKEND_URL, {
+            const response = await fetch(EMOTION_ML_URL, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ image: front64, timestamp }),

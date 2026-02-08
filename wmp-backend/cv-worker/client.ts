@@ -9,6 +9,7 @@ export interface Env {
   WEAVIATE_CLUSTER_URL: string;
   WEAVIATE_API_KEY: string;
   PYTHON_EMBEDDING_URL: string;
+  HF_EMOTION_URL: string;
 }
 
 export interface FaceMatch {
