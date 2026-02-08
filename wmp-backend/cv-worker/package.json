@@ -1,5 +1,15 @@
 {
+	"name": "cv-worker",
+	"type": "module",
+	"scripts": {
+		"dev": "tsx watch index.ts",
+		"start": "tsx index.ts"
+	},
 	"dependencies": {
+		"@hono/node-server": "^1.19.9",
+		"dotenv": "^16",
+		"hono": "^4.11.8",
+		"tsx": "^4.21.0",
 		"weaviate-client": "^3.11.0"
 	}
 }
