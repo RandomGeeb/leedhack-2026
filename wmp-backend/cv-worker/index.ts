@@ -42,15 +42,16 @@ app.post("/analyse", async (c) => {
       );
     }
 
-    const rawEmotions: Record<string, string>[] = await hfResponse.json();
+    const raw: any = await hfResponse.json();
 
-    // Transform from [{happy: "0.1"}, {sad: "0.2"}]
-    //            to  [{label: "happy", score: 0.1}, ...]
-    const emotions = rawEmotions
-      .map((obj) => {
-        const [label, scoreStr] = Object.entries(obj)[0];
-        return { label: label.toLowerCase(), score: parseFloat(scoreStr) };
-      })
+    // HuggingFace may return [[...]] (nested) or [...] (flat)
+    const list: any[] = Array.isArray(raw[0]) ? raw[0] : raw;
+
+    const emotions = list
+      .map((obj: any) => ({
+        label: String(obj.label).toLowerCase(),
+        score: Number(obj.score),
+      }))
       .sort((a, b) => b.score - a.score);
 
     return c.json(emotions);
