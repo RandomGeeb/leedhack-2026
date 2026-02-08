@@ -29,7 +29,7 @@ app.post("/analyse", async (c) => {
     const hfResponse = await fetch(c.env.HF_EMOTION_URL, {
       method: "POST",
       headers: {
-        "Content-Type": "application/octet-stream",
+        "Content-Type": "image/jpeg",
         "Authorization": `Bearer ${c.env.HF_API_KEY}`,
       },
       body: bytes,
