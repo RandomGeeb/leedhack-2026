@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "expo-app",
-    "slug": "expo-app",
+    "name": "Where's My Professor?",
+    "slug": "where-s-my-professor",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,6 +15,12 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "This app requires access to your location when open.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app requires access to your location even when closed.",
+        "NSLocationAlwaysUsageDescription":  "This app requires access to your location when open.",
         "NSCameraUsageDescription": "This app uses the camera to take photos with front and back cameras."
       },
       "bundleIdentifier": "com.derrick-lim.expoapp"
@@ -39,6 +45,16 @@
         "react-native-vision-camera",
         {
           "cameraPermissionText": "Allow this app to access your camera to take photos."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow this app to use your location.",
+          "locationAlwaysPermission": "Allow this app to use your location.",
+          "locationWhenInUsePermission": "Allow this app to use your location.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
         }
       ]
     ]
