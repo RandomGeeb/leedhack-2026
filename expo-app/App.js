@@ -11,6 +11,8 @@ import {
   ActivityIndicator,
   ScrollView,
   Animated,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -25,8 +27,21 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import {
+  ClerkProvider,
+  ClerkLoaded,
+  SignedIn,
+  SignedOut,
+  useAuth,
+  useUser,
+  useSignIn,
+  useSignUp,
+} from '@clerk/clerk-expo';
+import { tokenCache } from '@clerk/clerk-expo/token-cache';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
 const EMOTION_ML_URL = process.env.EXPO_PUBLIC_EMOTION_ML_URL ?? 'https://wheresmyprofessor-api.rcn.sh/analyse';
 const SAVE_URL = process.env.EXPO_PUBLIC_SAVE_URL ?? 'http://localhost:3000/api/save';
@@ -63,6 +78,314 @@ const MAX_DISTANCE_METRES = 50;
 const STEP_BACK = 'back';
 const STEP_FRONT = 'front';
 const STEP_PREVIEW = 'preview';
+
+
+// ══════════════════════════════════════════════
+// Auth Screen (Sign In / Sign Up)
+// ══════════════════════════════════════════════
+function AuthScreen() {
+  const { signIn, setActive: setSignInActive, isLoaded: isSignInLoaded } = useSignIn();
+  const { signUp, setActive: setSignUpActive, isLoaded: isSignUpLoaded } = useSignUp();
+  const { signOut } = useAuth();
+
+  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'verify'
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [pendingVerification, setPendingVerification] = useState(false);
+
+  async function handleSignIn() {
+    if (!isSignInLoaded) return;
+    setLoading(true);
+    try {
+      // Clear any stale session before attempting sign-in
+      try { await signOut(); } catch {}
+      const result = await signIn.create({ identifier: email, password });
+      if (result.status === 'complete') {
+        await setSignInActive({ session: result.createdSessionId });
+      } else {
+        Alert.alert('Sign In', 'Additional steps required. Please try again.');
+      }
+    } catch (err) {
+      const msg = err?.errors?.[0]?.longMessage || err?.message || 'Sign in failed';
+      Alert.alert('Sign In Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSignUp() {
+    if (!isSignUpLoaded) return;
+    setLoading(true);
+    try {
+      // Clear any stale session before attempting sign-up
+      try { await signOut(); } catch {}
+      await signUp.create({ emailAddress: email, password });
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setPendingVerification(true);
+      setMode('verify');
+    } catch (err) {
+      const msg = err?.errors?.[0]?.longMessage || err?.message || 'Sign up failed';
+      Alert.alert('Sign Up Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerify() {
+    if (!isSignUpLoaded) return;
+    setLoading(true);
+    try {
+      const result = await signUp.attemptEmailAddressVerification({ code });
+      if (result.status === 'complete') {
+        await setSignUpActive({ session: result.createdSessionId });
+      } else {
+        Alert.alert('Verification', 'Could not complete verification.');
+      }
+    } catch (err) {
+      const msg = err?.errors?.[0]?.longMessage || err?.message || 'Verification failed';
+      Alert.alert('Verification Error', msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ── Verification code screen ──
+  if (mode === 'verify' && pendingVerification) {
+    return (
+      <LinearGradient colors={['#2E1065', '#000000']} style={styles.authContainer}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.authInner}
+        >
+          <StatusBar style="light" />
+          <View style={styles.authHeader}>
+            <Ionicons name="mail-open-outline" size={48} color="#A78BFA" />
+            <Text style={styles.authTitle}>Check your email</Text>
+            <Text style={styles.authSubtitle}>
+              We sent a verification code to {email}
+            </Text>
+          </View>
+
+          <View style={styles.authForm}>
+            <View style={styles.inputWrapper}>
+              <Ionicons name="key-outline" size={20} color="#A78BFA" style={styles.inputIcon} />
+              <TextInput
+                style={styles.authInput}
+                placeholder="Verification code"
+                placeholderTextColor="#6B7280"
+                value={code}
+                onChangeText={setCode}
+                keyboardType="number-pad"
+                autoFocus
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.authButton, loading && styles.authButtonDisabled]}
+              onPress={handleVerify}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.authButtonText}>Verify Email</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity onPress={() => { setMode('signup'); setPendingVerification(false); setCode(''); }}>
+            <Text style={styles.authSwitchText}>Go back</Text>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </LinearGradient>
+    );
+  }
+
+  // ── Sign In / Sign Up screen ──
+  return (
+    <LinearGradient colors={['#2E1065', '#000000']} style={styles.authContainer}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.authInner}
+      >
+        <StatusBar style="light" />
+        <View style={styles.authHeader}>
+          <Ionicons name="location" size={48} color="#A78BFA" />
+          <Text style={styles.authTitle}>Where's My Professor?</Text>
+          <Text style={styles.authSubtitle}>
+            {mode === 'signin' ? 'Sign in to continue' : 'Create your account'}
+          </Text>
+        </View>
+
+        <View style={styles.authForm}>
+          <View style={styles.inputWrapper}>
+            <Ionicons name="mail-outline" size={20} color="#A78BFA" style={styles.inputIcon} />
+            <TextInput
+              style={styles.authInput}
+              placeholder="Email"
+              placeholderTextColor="#6B7280"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <View style={styles.inputWrapper}>
+            <Ionicons name="lock-closed-outline" size={20} color="#A78BFA" style={styles.inputIcon} />
+            <TextInput
+              style={styles.authInput}
+              placeholder="Password"
+              placeholderTextColor="#6B7280"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+          </View>
+
+          <TouchableOpacity
+            style={[styles.authButton, loading && styles.authButtonDisabled]}
+            onPress={mode === 'signin' ? handleSignIn : handleSignUp}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.authButtonText}>
+                {mode === 'signin' ? 'Sign In' : 'Sign Up'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          onPress={() => {
+            setMode(mode === 'signin' ? 'signup' : 'signin');
+            setEmail('');
+            setPassword('');
+          }}
+        >
+          <Text style={styles.authSwitchText}>
+            {mode === 'signin'
+              ? "Don't have an account? Sign Up"
+              : 'Already have an account? Sign In'}
+          </Text>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
+    </LinearGradient>
+  );
+}
+
+
+// ══════════════════════════════════════════════
+// Account Screen
+// ══════════════════════════════════════════════
+function AccountScreen() {
+  const { signOut } = useAuth();
+  const { user } = useUser();
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await signOut();
+    } catch (err) {
+      Alert.alert('Error', 'Could not sign out. Please try again.');
+      setSigningOut(false);
+    }
+  }
+
+  const displayName =
+    user?.fullName ||
+    user?.firstName ||
+    user?.emailAddresses?.[0]?.emailAddress?.split('@')[0] ||
+    'User';
+  const emailAddr = user?.primaryEmailAddress?.emailAddress || '';
+  const avatarUrl = user?.imageUrl;
+  const createdAt = user?.createdAt
+    ? new Date(user.createdAt).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+    : '';
+
+  return (
+    <LinearGradient colors={['#2E1065', '#000000']} style={styles.profileContainer}>
+      <ScrollView contentContainerStyle={styles.profileContent} showsVerticalScrollIndicator={false}>
+        <StatusBar style="light" />
+
+        {/* Avatar + name */}
+        <View style={styles.profileHeader}>
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.accountAvatar} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Ionicons name="person" size={40} color="#DDD6FE" />
+            </View>
+          )}
+          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={styles.profileHandle}>{emailAddr}</Text>
+        </View>
+
+        {/* Info cards */}
+        <View style={styles.analyticsTitleRow}>
+          <Text style={styles.analyticsTitle}>Account</Text>
+        </View>
+
+        <View style={styles.accountCard}>
+          <View style={styles.accountRow}>
+            <Ionicons name="mail-outline" size={20} color="#A78BFA" />
+            <View style={styles.accountRowInfo}>
+              <Text style={styles.accountRowLabel}>Email</Text>
+              <Text style={styles.accountRowValue}>{emailAddr}</Text>
+            </View>
+          </View>
+
+          <View style={styles.accountDivider} />
+
+          <View style={styles.accountRow}>
+            <Ionicons name="calendar-outline" size={20} color="#A78BFA" />
+            <View style={styles.accountRowInfo}>
+              <Text style={styles.accountRowLabel}>Member since</Text>
+              <Text style={styles.accountRowValue}>{createdAt}</Text>
+            </View>
+          </View>
+
+          <View style={styles.accountDivider} />
+
+          <View style={styles.accountRow}>
+            <Ionicons name="shield-checkmark-outline" size={20} color="#A78BFA" />
+            <View style={styles.accountRowInfo}>
+              <Text style={styles.accountRowLabel}>Status</Text>
+              <Text style={[styles.accountRowValue, { color: '#22C55E' }]}>Verified</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Sign out */}
+        <TouchableOpacity
+          style={[styles.signOutButton, signingOut && styles.authButtonDisabled]}
+          onPress={handleSignOut}
+          disabled={signingOut}
+        >
+          {signingOut ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="log-out-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.signOutButtonText}>Sign Out</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </LinearGradient>
+  );
+}
+
 
 function CameraScreen() {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -1035,36 +1358,48 @@ const Tab = createBottomTabNavigator();
 
 export default function App() {
   return (
-    <NavigationContainer>
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          tabBarIcon: ({ focused, color, size }) => {
-            let iconName;
-            if (route.name === 'Camera') {
-              iconName = focused ? 'camera' : 'camera-outline';
-            } else if (route.name === 'Student') {
-              iconName = focused ? 'person' : 'person-outline';
-            } else if (route.name === 'Lecturer') {
-              iconName = focused ? 'school' : 'school-outline';
-            }
-            return <Ionicons name={iconName} size={size} color={color} />;
-          },
-          tabBarStyle: {
-            backgroundColor: '#000',
-            borderTopWidth: 0,
-            height: Platform.OS === 'ios' ? 90 : 60,
-            paddingBottom: Platform.OS === 'ios' ? 30 : 10,
-          },
-          tabBarActiveTintColor: '#fff',
-          tabBarInactiveTintColor: '#666',
-          headerShown: false,
-        })}
-      >
-        <Tab.Screen name="Camera" component={CameraScreen} />
-        <Tab.Screen name="Student" component={StudentProfileScreen} />
-        <Tab.Screen name="Lecturer" component={LecturerProfileScreen} />
-      </Tab.Navigator>
-    </NavigationContainer>
+    <ClerkProvider tokenCache={tokenCache} publishableKey={CLERK_PUBLISHABLE_KEY}>
+      <ClerkLoaded>
+        <SignedOut>
+          <AuthScreen />
+        </SignedOut>
+        <SignedIn>
+          <NavigationContainer>
+            <Tab.Navigator
+              screenOptions={({ route }) => ({
+                tabBarIcon: ({ focused, color, size }) => {
+                  let iconName;
+                  if (route.name === 'Camera') {
+                    iconName = focused ? 'camera' : 'camera-outline';
+                  } else if (route.name === 'Student') {
+                    iconName = focused ? 'person' : 'person-outline';
+                  } else if (route.name === 'Lecturer') {
+                    iconName = focused ? 'school' : 'school-outline';
+                  } else if (route.name === 'Account') {
+                    iconName = focused ? 'settings' : 'settings-outline';
+                  }
+                  return <Ionicons name={iconName} size={size} color={color} />;
+                },
+                tabBarStyle: {
+                  backgroundColor: '#000',
+                  borderTopWidth: 0,
+                  height: Platform.OS === 'ios' ? 90 : 60,
+                  paddingBottom: Platform.OS === 'ios' ? 30 : 10,
+                },
+                tabBarActiveTintColor: '#fff',
+                tabBarInactiveTintColor: '#666',
+                headerShown: false,
+              })}
+            >
+              <Tab.Screen name="Camera" component={CameraScreen} />
+              <Tab.Screen name="Student" component={StudentProfileScreen} />
+              <Tab.Screen name="Lecturer" component={LecturerProfileScreen} />
+              <Tab.Screen name="Account" component={AccountScreen} />
+            </Tab.Navigator>
+          </NavigationContainer>
+        </SignedIn>
+      </ClerkLoaded>
+    </ClerkProvider>
   );
 }
 
@@ -1689,6 +2024,137 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     width: 44,
     textAlign: 'right',
+  },
+
+  // ── Auth Screen ──
+  authContainer: {
+    flex: 1,
+  },
+  authInner: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  authHeader: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+  authTitle: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '800',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  authSubtitle: {
+    color: '#A78BFA',
+    fontSize: 16,
+    fontWeight: '500',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  authForm: {
+    gap: 16,
+    marginBottom: 24,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.2)',
+    paddingHorizontal: 16,
+    height: 56,
+  },
+  inputIcon: {
+    marginRight: 12,
+  },
+  authInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  authButton: {
+    backgroundColor: '#8B5CF6',
+    borderRadius: 16,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  authButtonDisabled: {
+    opacity: 0.6,
+  },
+  authButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  authSwitchText: {
+    color: '#A78BFA',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  // ── Account Screen ──
+  accountAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(167, 139, 250, 0.3)',
+  },
+  accountCard: {
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.12)',
+  },
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  accountRowInfo: {
+    marginLeft: 14,
+    flex: 1,
+  },
+  accountRowLabel: {
+    color: '#A78BFA',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  accountRowValue: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  accountDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(167, 139, 250, 0.15)',
+  },
+  signOutButton: {
+    flexDirection: 'row',
+    backgroundColor: '#EF4444',
+    borderRadius: 16,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 60,
+  },
+  signOutButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
 
